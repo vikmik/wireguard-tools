@@ -22,6 +22,7 @@ PRE_UP=( )
 POST_UP=( )
 PRE_DOWN=( )
 POST_DOWN=( )
+RULES_PRIORITY=""
 SAVE_CONFIG=0
 CONFIG_FILE=""
 PROGRAM="${0##*/}"
@@ -65,6 +66,7 @@ parse_options() {
 			PreDown) PRE_DOWN+=( "$value" ); continue ;;
 			PostUp) POST_UP+=( "$value" ); continue ;;
 			PostDown) POST_DOWN+=( "$value" ); continue ;;
+			RulesPriority) RULES_PRIORITY="$value"; continue ;;
 			SaveConfig) read_bool SAVE_CONFIG "$value"; continue ;;
 			esac
 		fi
@@ -220,8 +222,13 @@ add_default() {
 	fi
 	local proto=-4 iptables=iptables pf=ip
 	[[ $1 == *:* ]] && proto=-6 iptables=ip6tables pf=ip6
-	cmd ip $proto rule add not fwmark $table table $table
-	cmd ip $proto rule add table main suppress_prefixlength 0
+	if [[ -n $RULES_PRIORITY ]]; then
+		cmd ip $proto rule add not fwmark $table table $table prio $((RULES_PRIORITY + 1))
+		cmd ip $proto rule add table main suppress_prefixlength 0 prio $RULES_PRIORITY
+	else
+		cmd ip $proto rule add not fwmark $table table $table
+		cmd ip $proto rule add table main suppress_prefixlength 0
+	fi
 	cmd ip $proto route add "$1" dev "$INTERFACE" table $table
 
 	local marker="-m comment --comment \"wg-quick(8) rule for $INTERFACE\"" restore=$'*raw\n' nftable="wg-quick-$INTERFACE" nftcmd 
@@ -276,6 +283,7 @@ save_config() {
 	for cmd in "${POST_DOWN[@]}"; do
 		new_config+="PostDown = $cmd"$'\n'
 	done
+	[[ -n $RULES_PRIORITY ]] && new_config+="RulesPriority = $RULES_PRIORITY"$'\n'
 	old_umask="$(umask)"
 	umask 077
 	current_config="$(cmd wg showconf "$INTERFACE")"
@@ -318,6 +326,9 @@ cmd_usage() {
 	    to configure DNS. The string \`%i' is expanded to INTERFACE.
 	  - SaveConfig: if set to \`true', the configuration is saved from the current
 	    state of the interface upon shutdown.
+	  - RulesPriority: may be specified on Linux to set the minimum priority of
+	    the IP routing rules added by wg-quick. If unspecified, the priority is
+	    determined by \`ip rule'.
 
 	See wg-quick(8) for more info and examples.
 	_EOF
